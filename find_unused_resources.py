@@ -217,3 +217,10 @@ def find_unused_code_files():
 if __name__ == "__main__":
     find_unused()
     find_unused_code_files()
+
+    try:
+    script_path = os.path.abspath(__file__)
+    os.remove(script_path)
+    print(f"🗑️ Deleted script")
+except Exception as e:
+    print(f"⚠️ Could not delete script file: {e}")
