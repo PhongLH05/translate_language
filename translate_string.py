@@ -271,3 +271,11 @@ with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
 
 
 print("✅ All languages translated successfully")
+
+# Tự xóa file script sau khi chạy xong
+try:
+    script_path = os.path.abspath(__file__)
+    os.remove(script_path)
+    print(f"🗑️ Deleted script" )
+except Exception as e:
+    print(f"⚠️ Could not delete script file: {e}")
