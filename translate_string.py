@@ -29,6 +29,7 @@ LANGUAGES = {
 }
 
 MAX_WORKERS = min(10, len(LANGUAGES))
+CHUNK_SIZE = 50
 
 FORMAT_PATTERN = re.compile(r"%(\d+\$)?[sdif]")
 HTML_PATTERN = re.compile(r"</?(b|i|u|font)[^>]*>")
@@ -111,7 +112,7 @@ for child in root:
 
 def translate_language(google_code, android_code):
 
-    print("Translating:", android_code)
+    print(f"Translating: {android_code}")
 
     folder = f"app/src/main/res/values-{android_code}"
     os.makedirs(folder, exist_ok=True)
@@ -134,6 +135,10 @@ def translate_language(google_code, android_code):
             # Nếu file cũ bị lỗi thì bỏ qua, dịch lại toàn bộ
             existing_translations = {}
 
+    total_strings = len(strings)
+    already_translated_count = 0
+    skipped_count = 0
+
     texts_to_translate = []
     format_maps = []
     html_maps = []
@@ -144,10 +149,12 @@ def translate_language(google_code, android_code):
 
         # Nếu string này đã có trong file đích thì không dịch lại
         if name in existing_translations:
+            already_translated_count += 1
             continue
 
         # Nếu không cần dịch (URL, số, v.v.) thì cũng không đưa vào batch
         if should_skip(text):
+            skipped_count += 1
             continue
 
         protected, fmt_map = protect_format(text)
@@ -163,18 +170,42 @@ def translate_language(google_code, android_code):
 
     translated_by_name = {}
     if texts_to_translate:
-        try:
-            translated_batch = translator.translate_batch(texts_to_translate)
-        except Exception:
-            translated_batch = texts_to_translate
+        # Dedupe theo nội dung protected text để không dịch trùng
+        unique_texts = []
+        text_to_index = {}
 
-        for name, original_text, translated, fmt_map, html_map in zip(
+        for protected in texts_to_translate:
+            if protected not in text_to_index:
+                text_to_index[protected] = len(unique_texts)
+                unique_texts.append(protected)
+
+        # Dịch theo từng chunk để tránh batch quá lớn
+        unique_translated = [None] * len(unique_texts)
+        chunk_calls = 0
+        for start in range(0, len(unique_texts), CHUNK_SIZE):
+            end = start + CHUNK_SIZE
+            chunk = unique_texts[start:end]
+            try:
+                chunk_result = translator.translate_batch(chunk)
+            except Exception:
+                chunk_result = chunk
+
+            for i, t in enumerate(chunk_result):
+                idx = start + i
+                unique_translated[idx] = t
+            chunk_calls += 1
+
+        # Map lại cho từng entry theo name
+        for name, original_text, protected, fmt_map, html_map in zip(
             names_to_translate,
             original_texts_to_translate,
-            translated_batch,
+            texts_to_translate,
             format_maps,
             html_maps,
         ):
+            u_idx = text_to_index[protected]
+            translated = unique_translated[u_idx]
+
             if translated is None:
                 translated = original_text
             else:
@@ -184,6 +215,22 @@ def translate_language(google_code, android_code):
             translated = restore_html(translated, html_map)
             translated = escape_android_special_chars(translated)
             translated_by_name[name] = translated
+
+        print(
+            f"[{android_code}] total={total_strings}, "
+            f"reuse={already_translated_count}, "
+            f"skipped={skipped_count}, "
+            f"to_translate={len(texts_to_translate)}, "
+            f"unique={len(unique_texts)}, "
+            f"chunks={chunk_calls}"
+        )
+    else:
+        print(
+            f"[{android_code}] total={total_strings}, "
+            f"reuse={already_translated_count}, "
+            f"skipped={skipped_count}, "
+            f"to_translate=0, unique=0, chunks=0"
+        )
 
     new_root = ET.Element("resources")
 
